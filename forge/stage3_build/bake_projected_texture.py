@@ -25,9 +25,101 @@ from typing import Any
 VALID_PROJECTION_MODES = ("perspective-camera-projection", "orthographic-front-projection", "triplanar-fallback")
 VALID_UNSEEN_STRATEGIES = ("mirror-symmetry", "palette-continue", "request-additional-view", "leave-unprojected")
 
+# Projection is the largest single fidelity lever in the pipeline, and it is
+# entirely a function of camera alignment: the pixels land where the camera says
+# they land. A perspective projection through a default-guess camera therefore
+# bakes a misalignment into the albedo, which every later gate then scores as a
+# material problem. So an unfitted camera BLOCKS a perspective bake instead of
+# emitting a warning next to a descriptor that will be used anyway.
+#
+# The orthographic and triplanar modes are exempt: neither claims to reproduce
+# the reference viewpoint, so neither depends on a solved camera.
+CAMERA_DEPENDENT_PROJECTION_MODES = frozenset({"perspective-camera-projection"})
+
+# RMS reprojection error, in reference-image pixels, above which a solved camera is
+# not trustworthy enough to project through. The solver converges to well under 1px
+# on a well-conditioned correspondence set, so this is generous rather than strict.
+DEFAULT_MAX_REPROJECTION_ERROR_PIXELS = 4.0
+
 
 def clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _scalar_is_agent_fill(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("agentFill") is True
+
+
+def camera_fitness(camera: dict[str, Any] | None, *, max_error_pixels: float) -> dict[str, Any]:
+    """Judge whether a camera block was actually solved, and how well.
+
+    Returns `{"fitted": bool, "blockers": [...], "reprojectionErrorPixels": float|None}`.
+    `solve_camera_pose.py` already marks every unsolved field `agentFill: true` and
+    tags the solved path `method: numerical-landmark-fit`, so this reads the
+    provenance the producer already recorded rather than guessing.
+    """
+    blockers: list[str] = []
+    if camera is None:
+        return {
+            "fitted": False,
+            "reprojectionErrorPixels": None,
+            "blockers": [
+                "no camera supplied; a perspective projection would use an identity/front "
+                "camera assumption and bake that misalignment into the albedo"
+            ],
+        }
+    if set(camera.keys()) == {"reference"}:
+        return {
+            "fitted": False,
+            "reprojectionErrorPixels": None,
+            "blockers": [
+                f"camera is an opaque reference id ({camera['reference']!r}) with no fitted "
+                "parameters to project through"
+            ],
+        }
+
+    fit = camera.get("fit") if isinstance(camera.get("fit"), dict) else None
+    error = fit.get("finalReprojectionError") if fit else None
+    error_value = float(error) if isinstance(error, (int, float)) and not isinstance(error, bool) else None
+
+    if camera.get("method") != "numerical-landmark-fit" or fit is None:
+        blockers.append(
+            "camera was not solved from landmark correspondences (method is "
+            f"{camera.get('method')!r}); re-run solve_camera_pose.py with --correspondences"
+        )
+
+    orientation = camera.get("orientation") if isinstance(camera.get("orientation"), dict) else {}
+    placeholder_fields = [
+        name
+        for name, key in (
+            ("fovDegrees", "fovDegrees"),
+            ("orientation.yawDegrees", "yawDegrees"),
+            ("orientation.pitchDegrees", "pitchDegrees"),
+            ("orientation.rollDegrees", "rollDegrees"),
+        )
+        if _scalar_is_agent_fill(camera.get(key) if key == "fovDegrees" else orientation.get(key))
+    ]
+    if placeholder_fields:
+        blockers.append(
+            "camera still carries agent-fill placeholder values for "
+            f"{', '.join(placeholder_fields)}"
+        )
+
+    if error_value is not None and error_value > max_error_pixels:
+        blockers.append(
+            f"camera fit RMS reprojection error {error_value:.3f}px exceeds the "
+            f"{max_error_pixels:.3f}px ceiling for projection"
+        )
+
+    convergence = fit.get("convergence") if fit and isinstance(fit.get("convergence"), dict) else {}
+    if convergence and convergence.get("status") != "converged":
+        blockers.append(f"camera fit did not converge (status {convergence.get('status')!r})")
+
+    return {
+        "fitted": not blockers,
+        "reprojectionErrorPixels": error_value,
+        "blockers": blockers,
+    }
 
 
 def load_camera(camera_arg: str | None) -> tuple[dict[str, Any] | None, list[str]]:
@@ -72,6 +164,45 @@ def build_descriptor(args: argparse.Namespace) -> dict[str, Any]:
     camera, camera_warnings = load_camera(args.camera)
     warnings = list(camera_warnings)
 
+    # Fail closed on an unfitted camera for the modes that actually depend on one,
+    # matching how generate_threejs_factory.py returns BLOCKED rather than emitting a
+    # factory it cannot stand behind.
+    max_error = getattr(args, "max_reprojection_error", DEFAULT_MAX_REPROJECTION_ERROR_PIXELS)
+    fitness = camera_fitness(camera, max_error_pixels=max_error)
+    camera_dependent = args.projection_mode in CAMERA_DEPENDENT_PROJECTION_MODES
+    if camera_dependent and not fitness["fitted"] and not getattr(args, "allow_unfitted_camera", False):
+        return {
+            "projectedTextureBake": {
+                "version": "1.0",
+                "generator": "stage3_build/bake_projected_texture.py",
+                "status": "BLOCKED",
+                "gate": "camera-fitness",
+                "targetMeshId": args.mesh_id,
+                "projectionMode": args.projection_mode,
+                "cameraFitness": fitness,
+                "cause": fitness["blockers"],
+                "nextAction": (
+                    "solve the camera against landmark correspondences: "
+                    "python3 forge/stage1_intake/solve_camera_pose.py <image> "
+                    "--correspondences <pairs.json> --out reference-camera.json, then re-run this "
+                    "bake with --camera reference-camera.json"
+                ),
+                "note": (
+                    "Projection fidelity is camera alignment. Baking through a default-guess camera "
+                    "writes the misalignment into the albedo, where later gates score it as a "
+                    "material defect instead of a camera defect. Use --allow-unfitted-camera only "
+                    "for a deliberately approximate bake, or switch to "
+                    "--projection-mode orthographic-front-projection/triplanar-fallback, neither of "
+                    "which claims to reproduce the reference viewpoint."
+                ),
+            }
+        }
+    if camera_dependent and not fitness["fitted"]:
+        warnings.append(
+            "camera is unfitted and --allow-unfitted-camera was passed: this bake is an "
+            f"APPROXIMATION, not a reference match ({'; '.join(fitness['blockers'])})"
+        )
+
     source_images: dict[str, str] = {"reference": str(Path(args.reference_image).expanduser())}
     if args.delit_image:
         source_images["delit"] = str(Path(args.delit_image).expanduser())
@@ -109,6 +240,7 @@ def build_descriptor(args: argparse.Namespace) -> dict[str, Any]:
             "projectionMode": args.projection_mode,
             "textureSize": args.texture_size,
             "camera": camera,
+            "cameraFitness": fitness,
             "sourceImages": source_images,
             "unseenRegionStrategy": {
                 "mode": unseen_strategy,
@@ -157,11 +289,31 @@ def main(argv: list[str]) -> int:
         default="mirror-symmetry",
         help="How to handle mesh regions outside the reference camera's view (default mirror-symmetry)",
     )
+    parser.add_argument(
+        "--max-reprojection-error",
+        type=float,
+        default=DEFAULT_MAX_REPROJECTION_ERROR_PIXELS,
+        help=(
+            "RMS reprojection-error ceiling in reference pixels for a solved camera "
+            f"(default {DEFAULT_MAX_REPROJECTION_ERROR_PIXELS})"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unfitted-camera",
+        action="store_true",
+        help=(
+            "Emit a perspective bake descriptor through an unfitted/placeholder camera. "
+            "Records the result as an explicit approximation; never use it for a "
+            "reference-matched finish."
+        ),
+    )
     parser.add_argument("--out", type=Path, help="Write the descriptor JSON to this path")
     args = parser.parse_args(argv)
 
     if args.texture_size <= 0:
         parser.error("--texture-size must be positive")
+    if args.max_reprojection_error <= 0:
+        parser.error("--max-reprojection-error must be positive")
 
     try:
         descriptor = build_descriptor(args)
@@ -171,6 +323,10 @@ def main(argv: list[str]) -> int:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(text + "\n", encoding="utf-8")
         print(text)
+        # A blocked descriptor is not a successful run: exit non-zero so a caller that
+        # only checks the status code cannot mistake it for a usable bake plan.
+        if descriptor.get("projectedTextureBake", {}).get("status") == "BLOCKED":
+            return 1
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

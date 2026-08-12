@@ -38,6 +38,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from diagnose_render import (  # noqa: E402
+    MASK_GRID_SIZE,
     bbox_of,
     bilateral_symmetry_error,
     load_mask,
@@ -52,6 +53,7 @@ from extract_pbr_evidence import build_foreground_mask, load_image  # noqa: E402
 from objectness import objectness_similarity  # noqa: E402  (stdlib OSIM-lite, same dir)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+from chamfer import directional_chamfer  # noqa: E402
 from color_metrics import ciede2000, srgb_to_lab  # noqa: E402
 from image_hash import normalized_similarity, phash_from_image  # noqa: E402
 
@@ -332,6 +334,17 @@ def evaluate(reference_png: Path, render_png: Path) -> dict[str, Any]:
     except Exception:
         spec_wash = None
 
+    # Directional chamfer on the silhouette CONTOUR. IoU above measures overlapping AREA,
+    # which is insensitive to boundary shape at matched area -- two silhouettes can share
+    # 0.95 IoU while one has a smooth curve where the other has a serration, because the
+    # mismatched pixels sit in a thin band along the edge. REPORT-ONLY (no ensemble weight)
+    # until the labeled corpus exists, on the same footing as hue_zone_parity: a signal that
+    # has never been measured against known-good/known-bad pairs must not move a verdict.
+    try:
+        chamfer: dict[str, Any] | None = directional_chamfer(ref_mask, ren_mask, MASK_GRID_SIZE)
+    except Exception:
+        chamfer = None
+
     # HARD gates: a fail is an immediate reject with a specific numeric reason.
     hard_failures: list[str] = []
     if mask_is_inverted(ref_mask_warnings) or mask_is_inverted(ren_mask_warnings):
@@ -422,9 +435,13 @@ def evaluate(reference_png: Path, render_png: Path) -> dict[str, Any]:
             "tonalParity": round(tonal, 4),
             "objectness": round(objectness, 4) if objectness is not None else None,
             "hueZoneParity": round(hue_zone, 4) if hue_zone is not None else None,
+            "directionalChamferAgreement": (
+                chamfer.get("agreement") if isinstance(chamfer, dict) else None
+            ),
         },
         "specularWash": spec_wash,
-        "reportOnlySignals": ["hueZoneParity", "specularWash"],
+        "directionalChamfer": chamfer,
+        "reportOnlySignals": ["hueZoneParity", "specularWash", "directionalChamfer"],
         "reconstructionModeSuspected": reconstruction_suspected,
         "weights": {k: w for k, (_s, w) in soft.items()},
         "reference": str(reference_png.resolve()),

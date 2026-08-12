@@ -5,6 +5,76 @@ All notable changes to **img2threejs** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Accuracy work closing the gap between the gates the documentation promised and the gates the
+deterministic layer actually enforced. Before this, `orchestrate_passes.py check` blocked a pass on
+exactly two things — spec depth and a Tier-1 result computed from one camera on a 64×64 luma grid —
+so every off-axis, structural and feature-scale gate was advisory.
+
+### Added
+- **Recorded off-axis gate evidence** — `forge/_shared/gate_results.py` gives `turntable_gate.py`,
+  `diagnose_render_multi_angle.py`, `attachment_anchor.py` and `self_intersection.py` the same
+  `--spec/--pass-id/--in-place` channel Tier 1 already had. `orchestrate_passes.py check` now
+  requires a passing off-axis entry for any non-planar spec and an attachment entry for any spec with
+  child appendages. Coverage is part of the verdict: a `passed` record only counts alongside
+  `coverageComplete`, so a clean run over zero sampled vertices or one orbit view unlocks nothing.
+  Gated on schema 2.2 so pre-2.2 specs are unaffected.
+- **`forge/stage4_review/microscope.py`** — feature-scale fidelity measured on native-resolution ROI
+  crops, emitting scores in the shape `per_feature.py` consumes. This feeds the critical-feature AND
+  gate, which was correct but starved: it consumes a scores dict and never opens an image, while
+  `divine_eye.py`'s grids make a few-pixel feature absent before comparison rather than badly scored.
+  Enforces the visible-footprint rule (never an isolation render), the concave-feature colour rule,
+  and `insufficient-reference-resolution` for features the reference cannot resolve.
+- **`forge/stage1_intake/solve_camera_pose.py --correspondences`** — makes
+  `fit_camera_to_correspondences()` reachable from the CLI. The seven-parameter damped
+  least-squares solver was fully implemented and tested as a library function, but the documented
+  pipeline command had no way to pass correspondences, so every pipeline-driven camera was the
+  heuristic default guess with `agentFill: true` on orientation and position.
+- **`forge/_shared/chamfer.py`** — bidirectional directional chamfer distance on the silhouette
+  contour, the signal `divine_eye.py` listed as deferred. IoU measures overlapping area and is
+  insensitive to boundary shape at matched area. Report-only pending calibration.
+- **`forge/stage4_review/build_corpus.py`** — generates a labeled known-good/known-bad corpus by
+  controlled perturbation, satisfying `calibrate_eye.py`'s long-standing precondition that a corpus
+  exist. Every pair is stamped `provenance: synthetic-perturbation` and `calibrate_eye.py` refuses to
+  authorize a threshold change from one: synthetic pairs are a valid regression harness, not a basis
+  for threshold values.
+- **Test coverage** for `compare_region_passes.py` (a documented blocking gate with none) and
+  `mesh_reference_compare.py`. Suite: 673 → 809 tests.
+- **`showcase-typecheck` CI job** — runs the suite with `IMG2THREEJS_REQUIRE_SHOWCASE=1` against a
+  showcase checkout, so the 25 TypeScript gates cannot skip silently. Without it a green run has not
+  proven the emitted Three.js compiles.
+
+### Changed
+- `bake_projected_texture.py` now returns `BLOCKED` (exit 1) for a perspective bake through an
+  unfitted camera instead of warning beside a descriptor that gets used anyway. Projection fidelity
+  is camera alignment, so an unfitted camera bakes misalignment into the albedo where later gates
+  score it as a material defect. Orthographic and triplanar modes are exempt;
+  `--allow-unfitted-camera` proceeds but stamps the result an approximation.
+- `new_sculpt_spec.py` emits `schemaVersion: 2.2`.
+- `SKILL.md` de-duplicated: the v1.5-beta merge had appended rather than merged, leaving two
+  `## Gates (do not skip)` sections, two `## Transparency` sections, duplicate steps 1a/1b/2 and 7–10,
+  non-monotonic numbering, and a stale "CS2 family boundary is **knife only**" paragraph
+  contradicting the correct knife + Glock-18 statement earlier in the same file.
+
+### Fixed
+- `compare_region_passes.py` reported `{"error": ""}` for an unknown `--capture-id`, because a bare
+  `next()` raised `StopIteration` whose `str()` is empty. It now names the available capture ids.
+- `ROADMAP.md` G3 was still listed as a high-priority "Hotfix in progress"; the InstancedMesh fix has
+  landed.
+- `README.md` duplicate pipeline paragraph and duplicate donate line pointing at two different hosts.
+
+### Measured, not fixed
+The corpus records two Divine Eye sensitivity gaps, left as recorded gaps rather than silently
+threshold-tuned on synthetic data:
+- a 60° hue error PASSES at fidelity 0.959 — `hueZoneParity` scores it 0.000, detecting it perfectly,
+  but carries zero ensemble weight because it is report-only until calibrated. The signal is not
+  missing, it is disconnected.
+- a radius-3 blur PASSES at fidelity 0.890.
+
+A deliberate negative control (a removed 14×14px feature) scores fidelity **1.0000** — the
+documented 64×64 blind spot measured rather than argued. `microscope.py` fails the same pair.
+
 ## [1.4.4-beta.2]
 
 ### Added

@@ -283,8 +283,22 @@ Input is the same mesh shape `geometry_integrity.py` accepts. Produce it from a 
 That call site is deliberate: as a standalone CLI the check only runs when somebody remembers to run
 it, and the defect it exists to catch survived eight review rounds precisely because nobody did.
 
+### Recording a gate verdict so it can block a pass
+Every gate in this section accepts `--pass-id <pass> --in-place` (plus `--spec <spec.json>` where the
+spec is not already a positional argument), which appends a compact record to `spec.gateResults`.
+This matters because `orchestrate_passes.py check` reads the **spec**, not stdout: a gate whose
+verdict is only printed cannot block anything, which is why these gates were advisory for so long
+despite `SKILL.md` calling them mandatory. The shared contract lives in
+`forge/_shared/gate_results.py`.
+
+The record stores the gate's own account of what it did **not** measure, and `passed` only satisfies
+the gate alongside `coverageComplete`. A clean self-intersection run over zero sampled vertices, a
+multi-angle run with one orbit view, or an attachment run with unmeasured anchors is stored as
+evidence of what ran and unlocks nothing — "0 violations" from a check that never ran is the failure
+this repository keeps rediscovering.
+
 ### stage4_review/turntable_gate.py
-`stage4_review/turntable_gate.py --capture 0=front.png --capture 90=right.png ... [--required N]... [--collapse-ratio R] [--allow-holes] [--json]`
+`stage4_review/turntable_gate.py --capture 0=front.png --capture 90=right.png ... [--required N]... [--collapse-ratio R] [--allow-holes] [--spec spec.json --pass-id PASS --in-place] [--json]`
 Two things `diagnose_render_multi_angle.py` does not do. First, **coverage is mandatory**: a missing
 required azimuth (default 0/90/180/270) fails the gate rather than going unnoticed, which is the
 entire point — defects that exist only off-axis survive any number of front-only review rounds.
@@ -294,7 +308,7 @@ AREA, so the collapse check cannot see it; this can. Use `--allow-holes` for a s
 has a through-hole at that angle — the hole is still reported, only the verdict changes.
 
 ### stage4_review/attachment_anchor.py
-`stage4_review/attachment_anchor.py spec.json [--measured measured.json] [--json]`
+`stage4_review/attachment_anchor.py spec.json [--measured measured.json] [--pass-id PASS --in-place] [--json]`
 Relates a worn or held item to the thing it is worn on or held by. `ANCHOR_DECLARED`,
 `ANCHOR_RESOLVES`, `ANCHOR_NOT_ROOT` (the literal shared bug — parenting to root leaves the item's
 transform unrelated to its body part), `ANCHOR_NOT_CYCLIC`, and, when `--measured` world positions are
@@ -310,6 +324,61 @@ Dumps a running model's meshes as the JSON `self_intersection.py` reads. Vertice
 local geometry is fine, and local space would hide exactly that. Normals go through the
 inverse-transpose. Every mesh it declines to emit — instanced, over the triangle cap, filtered out —
 is listed with its reason, so a short mesh list cannot be mistaken for a clean one.
+
+## Feature-scale fidelity and calibration
+
+### stage4_review/microscope.py
+`stage4_review/microscope.py --reference REF --render SHOT (--manifest features.json | --from-spec spec.json) [--component-hidden ID=PATH]... [--minimum-projected-pixels N] [--patch-dir DIR] [--scores-out scores.json] [--json]`
+Measures individual features at **native** reference resolution and emits scores in the shape
+`per_feature.py --scores` consumes. This exists because `divine_eye.py` computes its structural
+signals on a 64×64 luma grid, so a feature a few pixels wide is absent before any comparison happens
+rather than badly scored, and `per_feature.py`'s critical-feature AND gate — which is correct — had
+nothing producing numbers at that scale.
+
+Within a feature the score is the **worst** metric, never their mean, so a right colour cannot mask
+wrong linework; across features the aggregation is worst-first. The verdict is delegated to
+`per_feature.evaluate_features`, so the threshold rule has exactly one definition.
+
+Three refusals, each learned from a wrong answer:
+- Pass `--component-hidden id=frame.png` to measure the component's **visible footprint** (full frame
+  minus component-hidden frame). An isolation render shows geometry the reference photograph cannot
+  contain; measuring the mini-dragon's wings that way produced "the spars are twice too thick" and a
+  correction cycle spent thinning spars that were never too thick.
+- A feature marked `"concave": true`, or whose reference dark pixels read shading-like under
+  `min(r,g,b)` bucketing, has its colour metric dropped to report-only. A dark ratio on a cavity
+  measures shadow, not material.
+- A feature whose reference ROI falls below `minimumProjectedPixels` returns
+  `insufficient-reference-resolution` and is excluded from the gating scores. Zoom cannot create
+  information the reference does not contain, and gating against an upsample is worse than not gating.
+
+Exit `0` pass / `1` gate failure / `2` error — an unmeasurable manifest is an error, not a vacuous pass.
+
+### stage4_review/build_corpus.py
+`stage4_review/build_corpus.py REFERENCE --out-dir DIR [--manifest corpus.json] [--only NAME]... [--set NAME=VALUE]... [--json]`
+Generates the labeled corpus `calibrate_eye.py` has always required before the Eye may hard-gate
+anything. Each perturbation stands for a real defect class (`scale`, `translate`, `aspect`,
+`hue-shift`, `blur`, `flatten`, `remove-feature`) plus the mandatory `identity` known-good pair; a
+corpus without `identity` is refused, because it would measure only false rejects.
+
+Every pair is stamped `provenance: synthetic-perturbation`, and that stamp is load-bearing: a
+perturbed photograph carries the reference's own shading and noise, so its absolute fidelity numbers
+are not the numbers a Three.js render produces. It is a valid **regression** harness and never a basis
+for choosing threshold values.
+
+Each descriptor separates `expectedDetection` (what the Eye measurably does — what the regression
+audit asserts) from `desiredDetection` (what it should do). Where they differ the pair is reported as
+a **known gap**, so a passing run still shows the Eye's sensitivity holes instead of hiding them.
+`remove-feature` is a deliberate negative control: it scores fidelity 1.0000, which is the 64×64 blind
+spot measured rather than argued.
+
+### stage4_review/calibrate_eye.py
+`stage4_review/calibrate_eye.py --corpus corpus.json [--regression] [--json]`
+Runs the Eye over the corpus and reports signal separation, a provenance audit, and an expectation
+audit. `thresholdFlipAuthorized` requires **both** clean separation and all-real provenance — a
+synthetic corpus can be statistically acceptable and still be the wrong kind of data to set a
+threshold from. Use `--regression` to exit on the expectation audit instead, which is the correct mode
+for a synthetic corpus: it goes red when a signal's sensitivity moves in either direction, and stays
+green while behaviour matches what was recorded.
 
 ## Reference comparison and baselines
 

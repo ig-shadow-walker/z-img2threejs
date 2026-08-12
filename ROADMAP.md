@@ -184,7 +184,7 @@ latent bug.
 |---|---|---|---|
 | G1 | SkinnedMesh + Bones + Morph targets (organic deform, facial expression) | Roadmap **v1.8 — Animation** (rig-ready topology prepared in v1.5) | deferred |
 | G2 | glTF / GLB export + AnimationMixer (engine portability) | Roadmap **v1.7 — Game Pipeline** | deferred |
-| G3 | **InstancedMesh — real latent bug**: `instanced-cluster` in `VALID_PRIMITIVES` has no `geometry_for()` branch; repetition systems emit a hand-rolled `Mesh` clone loop, not `InstancedMesh` (`generate_threejs_factory.py:1091-1146`) | **Hotfix in progress** | high |
+| G3 | ~~**InstancedMesh — real latent bug**: `instanced-cluster` in `VALID_PRIMITIVES` had no `geometry_for()` branch; repetition systems emitted a hand-rolled `Mesh` clone loop, not `InstancedMesh`~~ | **Fixed.** `geometry_for()` resolves the cluster's base primitive with self-reference guarding (`generate_threejs_factory.py:1339`) and the repetition emitter builds a real `THREE.InstancedMesh` — one draw call for all repeated parts (`generate_threejs_factory.py:2974`) | done |
 | G4 | UV unwrapping / atlas, normal+AO baking (high→low), LOD, BVH; procedural-UV seams stretch at primitive joins | Partial today (procedural cyl/triplanar UV + height→normal). Baking and LOD land in **v1.7** | med |
 | G5 | WebGPURenderer + TSL node materials | Deferred — architecture, not render quality | low |
 | G6 | Topology / retopology / CSG boolean-merge (clean welded mesh for skinning) | Feeds **v1.5** rigging-ready topology; `three-bvh-csg` is for export/skinning, not static-prop quality | low |

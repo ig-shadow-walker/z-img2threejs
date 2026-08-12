@@ -12,6 +12,13 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
 from feature_acceptance_policy import feature_gate_failures
+from gate_results import (
+    GATE_ATTACHMENT_ANCHOR,
+    OFF_AXIS_GATES,
+    missing_gate_reasons,
+    satisfies_any_gate,
+    satisfies_gate,
+)
 from status_banner import emit_status
 
 
@@ -129,6 +136,15 @@ def next_required_evidence(spec: dict[str, Any], pass_id: str) -> list[str]:
     evidence.extend(pass_specific_evidence(pass_id))
     if pass_id in VISUAL_PASS_IDS:
         evidence.append("browser render screenshot from your agent's browser/screenshot tool")
+        if requires_off_axis_evidence(spec):
+            evidence.append(
+                "passing turntable_gate.py or diagnose_render_multi_angle.py result recorded "
+                "into the spec (--pass-id/--in-place) — one camera cannot verify a volume"
+            )
+        if requires_attachment_evidence(spec):
+            evidence.append(
+                "passing attachment_anchor.py result recorded into the spec (--pass-id/--in-place)"
+            )
         evidence.append("side-by-side reference/render comparison sheet for AI vision review")
         evidence.append("AI vision score at or above the visual acceptance threshold")
         evidence.append("all critical semantic feature scores from the shared image pair at or above their thresholds")
@@ -496,6 +512,87 @@ def has_passing_tier1_result(spec: dict[str, Any], pass_id: str) -> bool:
     )
 
 
+# Only specs authored under schema 2.2+ are held to the off-axis/attachment evidence
+# requirement, mirroring how requires_topology_classification gates the 2.1 topology
+# fields. A pre-2.2 spec was never told to record these, so blocking it would break
+# work that was valid when it was authored.
+OFF_AXIS_EVIDENCE_MIN_SCHEMA = (2, 2)
+
+# Primitives whose form genuinely IS planar, so orbiting them proves nothing and a
+# collapsed silhouette is correct rather than a defect.
+PLANAR_PRIMITIVES = {"plane-card"}
+
+
+def _schema_version_tuple(spec: dict[str, Any]) -> tuple[int, int]:
+    raw = spec.get("schemaVersion")
+    if not isinstance(raw, str):
+        return (0, 0)
+    parts = raw.split(".")
+    try:
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except ValueError:
+        return (0, 0)
+
+
+def _components(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    tree = spec.get("componentTree")
+    return [item for item in tree if isinstance(item, dict)] if isinstance(tree, list) else []
+
+
+def requires_off_axis_evidence(spec: dict[str, Any]) -> bool:
+    """True when this spec describes a form that a single camera cannot verify.
+
+    A model made only of plane cards is exempt: its silhouette is supposed to
+    collapse when orbited. Everything else claims volume, and a claim of volume
+    that was only ever photographed from the front is the exact defect class
+    `turntable_gate.py` and `diagnose_render_multi_angle.py` were written to catch.
+    """
+    if _schema_version_tuple(spec) < OFF_AXIS_EVIDENCE_MIN_SCHEMA:
+        return False
+    components = _components(spec)
+    if not components:
+        return False
+    return any(component.get("primitive") not in PLANAR_PRIMITIVES for component in components)
+
+
+def requires_attachment_evidence(spec: dict[str, Any]) -> bool:
+    """True when the spec has child appendages whose anchoring can be measured.
+
+    Needs nothing but the spec itself, so unlike mesh-integrity evidence it can be
+    required without depending on a browser or an exported mesh.
+    """
+    if _schema_version_tuple(spec) < OFF_AXIS_EVIDENCE_MIN_SCHEMA:
+        return False
+    return any(component_requires_attachment(component) for component in _components(spec))
+
+
+def off_axis_evidence_gaps(spec: dict[str, Any], pass_id: str) -> list[str]:
+    """Missing deterministic off-axis / attachment evidence for this pass.
+
+    Returns the reason each requirement is unmet, keeping "never ran", "ran and
+    failed" and "ran clean but measured nothing" distinct — they need different
+    fixes and must not collapse into one message.
+    """
+    gaps: list[str] = []
+    if requires_off_axis_evidence(spec) and not satisfies_any_gate(spec, OFF_AXIS_GATES, pass_id):
+        reasons = [
+            reason
+            for reason in (missing_gate_reasons(spec, gate, pass_id) for gate in sorted(OFF_AXIS_GATES))
+            if reason
+        ]
+        gaps.append(
+            "off-axis evidence missing: record a passing turntable_gate.py or "
+            "diagnose_render_multi_angle.py result for this pass with --spec/--pass-id/--in-place "
+            f"({'; '.join(reasons)})"
+        )
+    if requires_attachment_evidence(spec) and not satisfies_gate(spec, GATE_ATTACHMENT_ANCHOR, pass_id):
+        gaps.append(
+            "attachment evidence missing: record a passing attachment_anchor.py result for this "
+            f"pass with --pass-id/--in-place ({missing_gate_reasons(spec, GATE_ATTACHMENT_ANCHOR, pass_id)})"
+        )
+    return gaps
+
+
 def check_pass(spec: dict[str, Any], requested_pass: str) -> tuple[bool, str, dict[str, Any]]:
     pipeline = sync_pipeline(spec)
     ids = list(pipeline["passOrder"])
@@ -518,6 +615,12 @@ def check_pass(spec: dict[str, Any], requested_pass: str) -> tuple[bool, str, di
                 f"Tier 1 diagnostics have not passed for this render — run diagnose_render.py first",
                 pipeline,
             )
+        # Tier 1 scores ONE camera on a 64x64 luma grid. It passes an off-axis defect
+        # by construction, so it cannot be the last structural word before review.
+        if requested_pass in VISUAL_PASS_IDS:
+            off_axis_gaps = off_axis_evidence_gaps(spec, requested_pass)
+            if off_axis_gaps:
+                return False, f"pass {requested_pass!r} is blocked: {'; '.join(off_axis_gaps)}", pipeline
         return True, f"pass {requested_pass!r} is the current unlocked pass", pipeline
     previous_index = ids.index(requested_pass) - 1
     previous = ids[previous_index] if previous_index >= 0 else ""

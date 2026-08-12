@@ -28,6 +28,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "stage1_intake"))
 from extract_pbr_evidence import load_image, build_foreground_mask, mask_bbox  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+from gate_results import (  # noqa: E402
+    GATE_MULTI_ANGLE,
+    add_recording_arguments,
+    apply_recording,
+)
+
 
 def silhouette_area_fraction(png_path: Path) -> float:
     """Return the fraction of the frame occupied by the object's silhouette.
@@ -125,10 +132,23 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--collapse-ratio", type=float, default=0.15)
     parser.add_argument("--json", action="store_true", help="print JSON instead of a summary")
+    add_recording_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
         result = analyze_angles(args.reference, args.orbit, args.collapse_ratio)
+        entry = apply_recording(
+            args,
+            GATE_MULTI_ANGLE,
+            result,
+            passed=not result["degenerate"],
+            evidence={
+                "reference": str(args.reference),
+                "orbits": [str(path) for path in args.orbit],
+            },
+        )
+        if entry is not None:
+            result["recordedGateResult"] = entry
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:

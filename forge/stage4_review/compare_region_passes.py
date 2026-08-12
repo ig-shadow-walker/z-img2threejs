@@ -83,7 +83,16 @@ def _iou(reference_mask: list[bool], render_mask: list[bool], mask: list[bool] |
 
 def compare_capture(manifest_path: Path, capture_id: str) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    capture = next(item for item in manifest.get("captures", []) if item.get("id") == capture_id)
+    captures = manifest.get("captures", [])
+    # A bare next() raises StopIteration here, whose str() is empty -- the CLI's broad
+    # handler then reported {"error": ""}, which says nothing about what went wrong.
+    capture = next((item for item in captures if item.get("id") == capture_id), None)
+    if capture is None:
+        available = sorted(str(item.get("id")) for item in captures if isinstance(item, dict))
+        raise ValueError(
+            f"manifest has no capture with id {capture_id!r}; available ids: "
+            f"{available or '(none)'}"
+        )
     reference = capture.get("reference")
     if not isinstance(reference, dict):
         raise ValueError("capture has no GLB reference record")

@@ -41,6 +41,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+from gate_results import (  # noqa: E402
+    GATE_ATTACHMENT_ANCHOR,
+    add_recording_arguments,
+    apply_recording,
+)
+
 # Vocabulary for "this component IS a worn/held/hung attachment" -- deliberately small and
 # disjoint from ATTACHMENT_ROLES in validate_sculpt_spec.py, which flags a component that
 # needs an EMBEDDING contract (a limb welding into its parent's geometry). This gate is about
@@ -329,12 +336,24 @@ def main(argv: list[str]) -> int:
         help="JSON object (inline text or a file path) of id -> [x, y, z] world positions",
     )
     parser.add_argument("--json", action="store_true", help="print JSON instead of a summary")
+    # The spec is this gate's positional argument, so it must not also be a flag.
+    add_recording_arguments(parser, spec_flag=False)
     args = parser.parse_args(argv)
 
     try:
         spec = _load_json(args.spec)
         measured = _parse_measured(args.measured) if args.measured is not None else None
         result = analyze_attachments(spec, measured=measured)
+        entry = apply_recording(
+            args,
+            GATE_ATTACHMENT_ANCHOR,
+            result,
+            passed=bool(result["passed"]),
+            spec_path=args.spec,
+            evidence={"measured": args.measured} if args.measured is not None else None,
+        )
+        if entry is not None:
+            result["recordedGateResult"] = entry
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:

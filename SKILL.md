@@ -75,10 +75,7 @@ authoritative artifacts.
 - When a gate passes but visual inspection shows issues, explain the limitation: "2D gate passed (fidelity 0.83) but three-quarter render shows blade reads as toy (no grind wedge) — 2D gates are blind to 3D realism"
 
 **The user needs to be able to debug the process, not just the output.** If something is wrong, they should be able to trace which decision led to the error and correct it. Opaque processes force restarts; transparent processes enable refinement.
-## Transparency and Process Debugging
 
-Report what changed each pass with evidence (exact values/coordinates), name what still doesn't
-match, and never claim "done" when only "improved". A passing gate is not proof of 3D realism.
 Full rule + examples: `grimoire/review/self_correction.md`.
 
 ## GLB-mediated v2 render-fidelity track (1.5 alpha)
@@ -175,6 +172,9 @@ Full flags: `grimoire/scripts.md`. Never let a script *score* visuals — that i
     alternatives when the first result is incomplete. Build the spec from returned evidence and do
     not invent domain specs when local evidence exists. Search caches are local/generated only;
     preserve JSONL records and source provenance rather than replacing them with cache output.
+    Full query-expansion recipe (bilingual terms, focused retrieval, cache rules):
+    `grimoire/intake/local_spec_search.md` — MUST read it before retrying an incomplete or
+    domain-specific query.
 1aa. **Optional fidelity evidence adapters** — use them only when they improve an observed weak
     point; the stdlib core remains authoritative. Route thin/complex masks to local SAM2, character
     face/pose evidence to MediaPipe, and weak front/back cues to Depth Anything V2:
@@ -193,7 +193,8 @@ Full flags: `grimoire/scripts.md`. Never let a script *score* visuals — that i
     as non-authoritative evidence, attach the classification record, resolve the supported family,
     and choose `route` independently from `exactnessTier`. Missing classification, insufficient
     coverage, or a contradictory high-confidence class is `request-input`; unsupported families do
-    not continue into spec generation.
+    not continue into spec generation. MUST read `grimoire/intake/cs2_intake_contract.md` completely
+    before creating the manifest or running pre-spec assessment.
 2. **Pre-Spec Assessment Gate** — classify + score complexity + write the quality contract:
    `forge/stage2_spec/new_pre_spec_assessment.py "Name" --image <img> --complexity <simple|moderate|complex|ultra-complex> --out assessment.json`. Rules: `grimoire/intake/quality_contract.md`.
    Set `objectClass.primaryDomain` (`object` | `character` | `hybrid`) and fill the seeded
@@ -210,28 +211,6 @@ Full flags: `grimoire/scripts.md`. Never let a script *score* visuals — that i
    response matters more than matching this one reference. Finish routes + rulebook:
    `grimoire/build/cs2_finishes.md`; optional exact-texture acquisition:
    `grimoire/intake/cs2_texture_acquisition.md`.
-1a. **Local Spec Search** — after image analysis, before writing or refining a spec, pull local
-    domain evidence (anatomy/PBR/wear/geometry/runtime/physics) rather than inventing it:
-    `python3 forge/stage2_spec/new_pre_spec_assessment.py "Name" --image <img> --out assessment.json`
-    (auto-runs BM25, auto-picks `cs2`/`core_3d` collection, writes a `localSpecSearch` bundle that
-    `new_sculpt_spec.py --assessment` carries into the spec). Full query-expansion recipe
-    (bilingual terms, focused `search_specs.py` retrieval, cache rules):
-    `grimoire/intake/local_spec_search.md`. MUST read it before retrying an incomplete or
-    domain-specific query.
-1b. **CS2 intake manifest** — for a CS2 request, create and validate `cs2-intake.json` before
-    pre-spec authoring (admission, heuristic signal, classification, family/route resolution).
-    MUST read `grimoire/intake/cs2_intake_contract.md` completely before creating the manifest or
-    running pre-spec assessment.
-2. **Pre-Spec Assessment Gate** — classify + score complexity + write the quality contract:
-   `forge/stage2_spec/new_pre_spec_assessment.py "Name" --image <img> --complexity <simple|moderate|complex|ultra-complex> --out assessment.json`. Rules: `grimoire/intake/quality_contract.md`.
-   Set `objectClass.primaryDomain` (`object` | `character` | `hybrid`) and fill the seeded
-   `detailInventory` (its `targetMinDetails` scales with complexity). **Supported CS2 knife
-   skins**: always pass `--cs2`, which defaults the complexity tier to `ultra-complex`
-   (`targetMinDetails` 16, floor 9) — the finish/wear/hardware is the item, so CS2 is held to the
-   top fidelity bar. Author procedural GEOMETRY but route the FINISH through the projection path in
-   step 2c — a procedural finish for a patterned skin (Doppler/Gamma/Marble/Fade) reads visibly
-   wrong against the reference. Finish routes + rulebook: `grimoire/build/cs2_finishes.md`;
-   optional exact-texture acquisition: `grimoire/intake/cs2_texture_acquisition.md`.
 2b. **Detail inventory** (do not skip for detailed subjects) — scan zones and enumerate every
    identity-defining small detail (gloss, bevel, fasteners, linework, contours, stains):
    `forge/stage1_intake/build_detail_inventory.py <image> --mode grid-3x3 --out-dir <dir> --out di.json`.
@@ -310,60 +289,52 @@ Full flags: `grimoire/scripts.md`. Never let a script *score* visuals — that i
    interpolated across a vertex merge. It keeps `position` only, recomputing normals, so it is
    refused on an authored/unwrapped `uvStrategy`. For offline LOD tiers from an exported mesh,
    `forge/stage3_build/decimate.py <mesh.json> --ratio <r> --json` is the same algorithm.
-7. Render the current pass in a browser/preview, capture a screenshot at a review viewpoint.
-7a. **Off-axis and placement gates — a single review viewpoint is not evidence about the model.**
-   Capture a turntable, not one frame, and run all three. Each catches a defect class the older gates
-   pass by construction; skipping them is how a hole through a skull, a hat at hip height and a charm
-   floating below the ground plane survived eight front-only review rounds.
-   `forge/stage4_review/turntable_gate.py --capture 0=front.png --capture 90=right.png --capture 180=rear.png --capture 270=left.png --json`
-   `node runtime/scripts/export_mesh_geometry.mjs --url <preview> --out meshes.json` then
-   `forge/stage4_review/self_intersection.py meshes.json --json`
-   `forge/stage4_review/attachment_anchor.py object-sculpt-spec.json --measured measured.json --json`
-   All three exit `0` clean / `1` gate failure / `2` error. A failure blocks `continue` for the pass
-   even when the global fidelity score passes — the score is computed from one camera and a 64×64 luma
-   grid, and neither can represent any of these defects. Read `sampledVertexCount` /
-   `unmeasuredAttachments` / `missingAzimuths` before believing a clean verdict: each names the part of
-   the model the gate did not actually look at.
-8. Package one side-by-side sheet, then inspect it with agent vision:
-   `forge/stage4_review/make_comparison_sheet.py --reference <img> --render <shot> --out cmp.png --json`.
-9. Record the review (overall + per-layer + per-feature scores + decision):
-    `forge/stage4_review/append_review.py object-sculpt-spec.json --pass-id <pass> --fidelity <0-1> --action <continue|refine-spec|refine-code|request-input|stop> --summary "..." --render-screenshot <shot> --comparison-image cmp.png --ai-vision-score <0-1> --layer-scores-json '{...}' --feature-reviews-json <f.json> --in-place`.
-   For the CS2 family path, also attach the versioned report with
-   `--cs2-review-json cs2-review.json --review-scene-json forge/tests/fixtures/knife_review_scene.json`.
-   A failed family, painted-region, projection-coverage, critical-detail, or orbit gate blocks
-   `continue` even when the global score passes. See `docs/cs2/review-gates.md`.
-10. Sync pipeline state after manual review edits:
-     `forge/stage3_build/orchestrate_passes.py sync object-sculpt-spec.json --in-place`.
-
-## Forge Runtime Contracts
-
-Subdivision runtime tests compile generated TypeScript against the showcase checkout. Set
-`IMG2THREEJS_SHOWCASE_ROOT` to that checkout; without it, local runtime-only tests skip with an
-actionable message while static contracts still run. CI should set `IMG2THREEJS_REQUIRE_SHOWCASE=1`
-to turn a missing showcase checkout into a test failure.
-
-```bash
-IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 forge/tests/test_subdivision.py
-IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 -m unittest discover -s forge/tests
-IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 forge/tests/test_showcase_tsc_smoke.py
-```
-   (generator is pass-gated: a future `--pass-id` fails until prior passes are reviewed `continue`).
-   The local state adds `--force` only for a new pass or `refine-spec`; `refine-code` edits the
-   current artifact without regenerating it. Before overwriting, carry valid hand refinement back
-   into the spec; generated code must not be the only copy of reconstruction decisions.
-7. Render the current pass in a browser/preview, capture a screenshot at a review viewpoint.
-8. **Run deterministic gates before AI vision.** MUST read
-   `grimoire/review/gates_reference.md` and `grimoire/review/self_correction.md` completely. Run
-   `forge/stage4_review/diagnose_render.py` and record the passing Tier 1 result with
-   `--spec object-sculpt-spec.json --pass-id <pass> --in-place`; for non-planar forms also run
-   `forge/stage4_review/diagnose_render_multi_angle.py` with the fixed view and at least two
-   meaningful orbit views. Then run
-   `forge/stage3_build/orchestrate_passes.py check object-sculpt-spec.json --pass-id <pass>`.
+   Regeneration is action-aware: the local state adds `--force` only for a new pass or
+   `refine-spec`; `refine-code` edits the current artifact without regenerating it. Before
+   overwriting, carry valid hand refinement back into the spec — generated code must not be
+   the only copy of reconstruction decisions.
+7. Render the current pass in a browser/preview. Capture the fixed review viewpoint **and** the
+   orbit views the next step needs; one frame is not evidence about a three-dimensional model.
+8. **Run the deterministic gates before AI vision, and RECORD each verdict into the spec.** MUST
+   read `grimoire/review/gates_reference.md` and `grimoire/review/self_correction.md` completely.
+   A gate whose result is only printed to stdout cannot block anything — `orchestrate_passes.py
+   check` reads the spec, so `--pass-id ... --in-place` is what makes a failure binding.
+   - Tier 1: `forge/stage4_review/diagnose_render.py --reference <img> --render <shot>
+     --spec object-sculpt-spec.json --pass-id <pass> --in-place`
+   - Off-axis (required for any non-planar form; either one satisfies the gate):
+     `forge/stage4_review/turntable_gate.py --capture 0=front.png --capture 90=right.png
+     --capture 180=rear.png --capture 270=left.png --spec object-sculpt-spec.json --pass-id <pass>
+     --in-place --json`, or `forge/stage4_review/diagnose_render_multi_angle.py --reference
+     <fixed-shot> --orbit <orbit-shot> --orbit <orbit-shot> --spec object-sculpt-spec.json
+     --pass-id <pass> --in-place`
+   - Attachment placement (required when the spec has child appendages):
+     `forge/stage4_review/attachment_anchor.py object-sculpt-spec.json --measured measured.json
+     --pass-id <pass> --in-place --json`
+   - Mesh integrity, when a mesh export exists:
+     `node runtime/scripts/export_mesh_geometry.mjs --url <preview> --out meshes.json` then
+     `forge/stage4_review/self_intersection.py meshes.json --spec object-sculpt-spec.json
+     --pass-id <pass> --in-place --json`
+   All exit `0` clean / `1` gate failure / `2` error. Skipping them is how a hole through a skull,
+   a hat at hip height and a charm floating below the ground plane survived eight front-only review
+   rounds. **Coverage is part of the verdict**: read `sampledVertexCount` /
+   `unmeasuredAttachments` / `missingAzimuths` before believing a clean result — each names what the
+   gate did not look at, and a pass over zero measured pixels does not satisfy the gate.
+   Then run `forge/stage3_build/orchestrate_passes.py check object-sculpt-spec.json --pass-id <pass>`.
+8a. **Feature-scale fidelity — the global score cannot see a small detail.** Divine Eye's signals run
+   on a 64×64 luma grid, so an identity detail a few pixels wide in the reference is absent before any
+   comparison happens, not scored badly. When fidelity depends on individual tears, spars, fangs,
+   fasteners or engraved linework, measure them at native resolution:
+   `forge/stage4_review/microscope.py --reference <img> --render <shot> --from-spec object-sculpt-spec.json
+   --scores-out feature-scores.json`, then feed `feature-scores.json` to `append_review.py
+   --feature-reviews-json`. Supply `--component-hidden <componentId>=<frame.png>` to measure a
+   component's visible footprint rather than an isolation render. A feature the reference cannot
+   resolve returns `insufficient-reference-resolution` and is excluded from gating rather than scored.
+   Rules: `grimoire/review/divine_eye_microscope.md`.
 9. Package one side-by-side sheet, then inspect it with agent vision:
    `forge/stage4_review/make_comparison_sheet.py --reference <img> --render <shot> --out cmp.png --json`.
 10. Record the review (overall + per-layer + per-feature scores + decision):
     `forge/stage4_review/append_review.py object-sculpt-spec.json --pass-id <pass> --fidelity <0-1> --action <continue|refine-spec|refine-code|request-input|stop> --summary "..." --render-screenshot <shot> --comparison-image cmp.png --ai-vision-score <0-1> --layer-scores-json '{...}' --feature-reviews-json <f.json> --in-place`.
-   For the CS2 knife path, also attach the versioned report with
+   For the CS2 family path, also attach the versioned report with
    `--cs2-review-json cs2-review.json --review-scene-json forge/tests/fixtures/knife_review_scene.json`.
    Produce that report first with
    `forge/stage4_review/cs2_review.py --manifest cs2-intake.json --metrics cs2-review-inputs.json --scene forge/tests/fixtures/knife_review_scene.json --out cs2-review.json`.
@@ -376,6 +347,20 @@ IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 forge/tests/test
 12. Before declaring completion, run
     `forge/stage4_review/check_part_coverage.py --spec object-sculpt-spec.json --manifest parts.json`
     and verify the action-ready hierarchy. Mark `part-coverage` and `action-ready` only with evidence.
+
+## Forge Runtime Contracts
+
+Subdivision runtime tests compile generated TypeScript against the showcase checkout. Set
+`IMG2THREEJS_SHOWCASE_ROOT` to that checkout; without it, local runtime-only tests skip with an
+actionable message while static contracts still run. CI sets `IMG2THREEJS_REQUIRE_SHOWCASE=1` in the
+`showcase-typecheck` job so a missing checkout is a failure rather than a silent skip — without that
+flag a green run has not proven the emitted Three.js compiles.
+
+```bash
+IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 forge/tests/test_subdivision.py
+IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 -m unittest discover -s forge/tests
+IMG2THREEJS_SHOWCASE_ROOT=/path/to/img2threejs-showcase python3 forge/tests/test_showcase_tsc_smoke.py
+```
 
 ## CS2 image-matched rule
 
@@ -464,6 +449,33 @@ evidence caused it, what still differs, and choose exactly one next action:
   `forge/stage4_review/diagnose_render_multi_angle.py` flags `degenerate-view` when an orbited
   silhouette collapses (a flat plane faking a volume). Orbit angles use reference-free
   self-consistency — never scored against a reference angle the photo doesn't cover.
+- **Recorded off-axis evidence (schema 2.2+)**: the off-axis and placement gates write their verdict
+  into `spec.gateResults` via `--pass-id/--in-place`, and `orchestrate_passes.py check` requires a
+  passing entry for the current pass before the pass can advance. A non-planar spec needs a
+  `turntable` **or** `multi-angle` entry; a spec with child appendages needs an `attachment-anchor`
+  entry. Tier 1 alone is no longer sufficient: it scores one camera on a 64×64 luma grid and passes
+  an off-axis defect by construction. **A recorded `passed` is only honoured alongside
+  `coverageComplete`** — a clean verdict over zero sampled vertices, zero orbit views or unmeasured
+  attachments is stored as evidence of what ran but never unlocks a pass. Pre-2.2 specs are exempt so
+  existing work is not retroactively blocked.
+- **Feature-scale fidelity (the microscope)**: `forge/stage4_review/microscope.py` crops declared
+  feature ROIs at native reference resolution and emits per-feature scores for
+  `forge/stage4_review/per_feature.py`, whose critical-feature AND gate was previously correct but
+  starved — it consumes a scores dict and never opens an image. Scoring is worst-of, never averaged,
+  so a right colour cannot mask wrong linework. Two rules are enforced, both learned from confident
+  false findings: measure a component's **visible footprint** (full frame minus component-hidden
+  frame), never an isolation render, which reveals geometry the reference cannot contain; and never
+  colour-gate a **concave** feature, where a dark ratio captures cavity shading rather than material.
+  A feature below its reference-pixel floor returns `insufficient-reference-resolution` and is
+  excluded from gating — gating against an upsampled invention is worse than not gating.
+- **Projection needs a solved camera**: projection fidelity IS camera alignment, so
+  `forge/stage3_build/bake_projected_texture.py` returns `BLOCKED` (exit 1) for a
+  `perspective-camera-projection` bake through a camera that was never fitted, rather than warning
+  beside a descriptor that gets used anyway. Solve it first with
+  `forge/stage1_intake/solve_camera_pose.py <image> --correspondences <pairs.json>`, which runs the
+  seven-parameter damped least-squares fit and records the RMS reprojection error. Orthographic and
+  triplanar modes are exempt — neither claims to reproduce the reference viewpoint.
+  `--allow-unfitted-camera` proceeds but labels the result an explicit approximation.
 - **CS2 review contract**: `forge/stage4_review/cs2_review.py` consumes the manifest and
   versioned scene fixture, then blocks wrong family identity, missing projection coverage,
   painted-region mismatch, critical identity-detail failure, finish/material response failure,
@@ -524,35 +536,16 @@ evidence caused it, what still differs, and choose exactly one next action:
   strict-quality requires a filled `anatomy` block (head-units, proportions, face landmarks) and
   character feature targets. Suitability routing for humans: `grimoire/intake/validation_rubric.md`
   (stylized vs maximum-likeness). Stylized bust, not a face-copy; refine positions per reference.
-The initial CS2 family boundary is **knife only**. Pistol, rifle, SMG, sniper, heavy, glove, and
-unknown knife subtypes must stop with `unsupported-family` or `unsupported-subtype`; they must not
-receive the knife component tree as a generic fallback.
+
+The CS2 family boundary is stated once, above: supported **knife** subtypes plus the
+**Glock-18** pistol adapter. Everything else stops with `unsupported-family` or
+`unsupported-subtype` and must not receive another family's component tree as a fallback.
 
 For every CS2 reconstruction, MUST read the full layer contract, intake order, and surface/review
 rule in `grimoire/intake/cs2_intake_contract.md` before intake state can advance.
 
-## Gates (do not skip)
-
-Before any visual review or `continue` decision, MUST read the full gate-by-gate contract in
-`grimoire/review/gates_reference.md` (Divine Eye, VLM rescue, multi-angle, CS2 review, bounded
-correction, screenshot feedback, assembly, attachment, material, detail inventory, character
-track). In short:
-
-- Validate references first (`grimoire/intake/validation_rubric.md`, `check_reference_admission.py`).
-- `divine_eye.py` is deterministic-first; the VLM (`vlm_gate.py`) is a gated last layer, never
-  consulted on a hard-gate failure.
-- A non-planar form must hold from ≥2 angles (`diagnose_render_multi_angle.py`).
-- CS2 knife builds also run `cs2_review.py` against the versioned scene fixture.
-- Local state enforces 3 corrections per pass and 6 total by default; reaching either limit is a
-  hard stop. `correction_loop.py` may stop earlier on repeated defects, oscillation, or plateau.
-- `continue` requires a render + comparison sheet + AI-vision score ≥ threshold, every critical
-  feature ≥ its own threshold (`grimoire/feedback/render_capture.md`).
-- Every model ships explodable AND clickable — a structure gate, not pixels
-  (`check_part_coverage.py`, `grimoire/build/geometry_patterns.md`).
-- Action-ready, attachment, material/lighting, detail inventory, and character-track requirements:
-  `grimoire/readiness/action_rigging.md`, `grimoire/readiness/joint_attachment.md`,
-  `grimoire/feedback/shading_realism.md`, `grimoire/intake/quality_contract.md`,
-  `grimoire/intake/validation_rubric.md`.
+Before any visual review or `continue` decision, MUST also read the gate-by-gate contract in
+`grimoire/review/gates_reference.md`.
 
 ## Self-Correction
 

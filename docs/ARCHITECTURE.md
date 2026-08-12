@@ -110,6 +110,14 @@ The net effect: you still get a faithful 3D model from an image, but the expensi
 | `stage3_build/generate_threejs_factory.py` | Emit the Three.js `Group` factory for the current unlocked pass. |
 | `stage4_review/make_comparison_sheet.py` | Package one reference-vs-render sheet for review. |
 | `stage4_review/append_review.py` | Record a per-pass review: scores, decision, evidence. |
+| `stage4_review/turntable_gate.py` | Mandatory-azimuth orbit coverage and interior-hole detection; records into `spec.gateResults`. |
+| `stage4_review/diagnose_render_multi_angle.py` | Flag a silhouette that collapses when orbited; records into `spec.gateResults`. |
+| `stage4_review/attachment_anchor.py` | Measure child-part anchoring against the spec; records into `spec.gateResults`. |
+| `stage4_review/self_intersection.py` | Mesh self-intersection over an exported geometry dump; records into `spec.gateResults`. |
+| `stage4_review/microscope.py` | Native-resolution per-feature fidelity, feeding `per_feature.py`'s critical-feature gate. |
+| `stage4_review/build_corpus.py` | Generate a labeled known-good/known-bad corpus by controlled perturbation. |
+| `stage4_review/calibrate_eye.py` | Audit the corpus: signal separation, provenance, regression, and known gaps. |
+| `stage4_review/mesh_reference_compare.py` | Band-by-band GLB proportion comparison, aligned on the ground plane. |
 | `stage4_review/material_views.py` | Deterministic material camera/crop/microscope plan and capture readback validation. |
 | `stage4_review/material_comparator.py` | Per-region crop metrics and mismatch tags. |
 | `stage4_review/material_gate.py` | Blocking material acceptance and cross-pass compatibility gate. |

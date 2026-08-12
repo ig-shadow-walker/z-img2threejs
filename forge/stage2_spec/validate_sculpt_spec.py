@@ -13,6 +13,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "stage3_build"))
 from feature_acceptance_policy import feature_gate_failures, feature_review_policy
+from gate_results import GATE_RESULTS_KEY, KNOWN_GATES
 from sdf_primitives import validate_sdf_descriptor
 from subdivision import (
     ATTACHMENT_CYLINDER_SUBDIVISION_SOURCE_FACES,
@@ -1835,6 +1836,46 @@ def validate_visual_evidence_history(spec: dict[str, Any], errors: list[str]) ->
         validate_visual_evidence_item(item, f"visualEvidence[{index}]", errors)
 
 
+def validate_gate_results(spec: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+    """Validate `gateResults`, the recorded verdicts of the deterministic off-axis gates.
+
+    Optional and absent from pre-2.2 specs by design. When present each entry must
+    name a known gate, carry a boolean verdict, and carry the gate's own coverage
+    account — a `passed` entry whose `coverageComplete` is false is stored evidence
+    but never satisfies the gate, so it warns rather than silently reading as a pass.
+    """
+    results = spec.get(GATE_RESULTS_KEY)
+    if results is None:
+        return
+    if not isinstance(results, list):
+        errors.append(f"{GATE_RESULTS_KEY} must be an array")
+        return
+    valid_pass_ids = VALID_PIPELINE_PASS_IDS
+    for index, entry in enumerate(results):
+        label = f"{GATE_RESULTS_KEY}[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        gate = entry.get("gate")
+        if gate not in KNOWN_GATES:
+            errors.append(f"{label}.gate must be one of {sorted(KNOWN_GATES)}")
+        if not isinstance(entry.get("passed"), bool):
+            errors.append(f"{label}.passed must be a boolean")
+        if not isinstance(entry.get("coverageComplete"), bool):
+            errors.append(f"{label}.coverageComplete must be a boolean")
+        pass_id = entry.get("passId")
+        if pass_id is not None and pass_id not in valid_pass_ids:
+            errors.append(f"{label}.passId {pass_id!r} is not a known build pass")
+        coverage = entry.get("coverage")
+        if coverage is not None and not isinstance(coverage, dict):
+            errors.append(f"{label}.coverage must be an object")
+        if entry.get("passed") is True and entry.get("coverageComplete") is False:
+            warnings.append(
+                f"{label}: gate {gate!r} passed but measured nothing usable, so it does not "
+                "satisfy the gate — re-run it with full coverage"
+            )
+
+
 def validate_build_passes(spec: dict[str, Any], errors: list[str], warnings: list[str]) -> list[str]:
     build_passes = spec.get("buildPasses")
     if build_passes is None:
@@ -2460,6 +2501,7 @@ def validate_spec(spec: dict[str, Any]) -> tuple[list[str], list[str]]:
     validate_feature_review_targets(spec, errors, warnings)
     validate_review_history(spec, errors, warnings)
     validate_visual_evidence_history(spec, errors)
+    validate_gate_results(spec, errors, warnings)
     build_pass_ids = validate_build_passes(spec, errors, warnings)
     validate_sculpt_pipeline(spec, build_pass_ids, errors, warnings)
     validate_look_dev_targets(spec, errors, warnings)

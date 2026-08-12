@@ -60,7 +60,11 @@ PASS_STEPS: Final = (
     ("render-capture", "Render {pass_id} and capture the fixed review view plus meaningful orbit views"),
     ("review-contract-read", "Read grimoire/review/gates_reference.md and grimoire/review/self_correction.md completely"),
     ("tier1-diagnostics", "python3 forge/stage4_review/diagnose_render.py --reference {reference} --render <shot> --spec {spec} --pass-id {pass_id} --in-place"),
-    ("multi-angle-review", "python3 forge/stage4_review/diagnose_render_multi_angle.py --reference <fixed-shot> --orbit <orbit-shot> --orbit <orbit-shot>"),
+    # Recorded into the spec (--spec/--pass-id/--in-place) so orchestrate_passes.check
+    # can read the verdict. Printing it to stdout leaves nothing for the gate to check.
+    ("multi-angle-review", "python3 forge/stage4_review/diagnose_render_multi_angle.py --reference <fixed-shot> --orbit <orbit-shot> --orbit <orbit-shot> --spec {spec} --pass-id {pass_id} --in-place"),
+    ("turntable-review", "python3 forge/stage4_review/turntable_gate.py --capture 0=front.png --capture 90=right.png --capture 180=rear.png --capture 270=left.png --spec {spec} --pass-id {pass_id} --in-place --json"),
+    ("attachment-anchor-review", "python3 forge/stage4_review/attachment_anchor.py {spec} --measured measured.json --pass-id {pass_id} --in-place --json"),
     ("pass-gate-check", "python3 forge/stage3_build/orchestrate_passes.py check {spec} --pass-id {pass_id}"),
     ("ai-review-recorded", "Create the comparison sheet, inspect it with agent vision, and append exactly one review action"),
     ("pipeline-sync", "python3 forge/stage3_build/orchestrate_passes.py sync {spec} --in-place"),

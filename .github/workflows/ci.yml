@@ -15,3 +15,60 @@ jobs:
     with:
       python-version: "3.10"
       test-command: python3 -m unittest discover -s forge/tests
+
+  # The job above runs without IMG2THREEJS_SHOWCASE_ROOT, so every showcase TypeScript
+  # gate SKIPS -- 25 of them. CLAUDE.md is explicit about what that means: "without it they
+  # skip, and a green run has not proven the emitted Three.js compiles". A green `test` job
+  # therefore says the Python logic is sound, not that the generator emits valid Three.js.
+  #
+  # This job closes that gap. IMG2THREEJS_REQUIRE_SHOWCASE=1 turns a missing showcase
+  # checkout into a hard failure instead of a silent skip, so the typecheck gates cannot
+  # quietly stop running.
+  showcase-typecheck:
+    name: Showcase TypeScript gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the skill
+        uses: actions/checkout@v4
+        with:
+          path: skill
+
+      - name: Check out the showcase
+        uses: actions/checkout@v4
+        with:
+          repository: img2threejs/img2threejs-showcase
+          path: showcase
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Lockfile-aware rather than hard-coded to `npm ci`: this repo does not vendor the
+      # showcase, so its package manager is not something this workflow can assume. An
+      # unconditional `npm ci` fails outright when the lockfile is absent or is a
+      # pnpm/yarn lockfile, and that failure would look like a typecheck failure.
+      - name: Install showcase dependencies
+        working-directory: showcase
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f pnpm-lock.yaml ]; then
+            corepack enable && pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            corepack enable && yarn install --immutable
+          else
+            npm install
+          fi
+
+      - name: Run the suite with the showcase gates required
+        working-directory: skill
+        env:
+          IMG2THREEJS_SHOWCASE_ROOT: ${{ github.workspace }}/showcase
+          # Without this, a broken or missing checkout would skip rather than fail, which is
+          # precisely the failure mode this job exists to prevent.
+          IMG2THREEJS_REQUIRE_SHOWCASE: "1"
+        run: python3 -m unittest discover -s forge/tests

@@ -14,13 +14,26 @@ Do not re-implement these. Verified against the code, not assumed:
 |---|---|---|
 | Critical-feature AND gate | **already implemented** | `stage4_review/per_feature.py` — `is_gating()` returns true for `tier == "critical"` or `mustPass`, and `passed` is false if any gating feature is missing or below threshold |
 | Arbitrary named ROIs in the inventory | **already implemented** | `stage1_intake/build_detail_inventory.py` — `component-zones` mode plus `--components` takes named normalized regions. The *default* (`DEFAULT_COMPONENT_ZONES`) is only upper/middle/lower thirds, which is what makes it feel grid-only |
-| Chamfer distance | referenced | `stage4_review/divine_eye.py` |
-| ΔE colour difference | present | `stage4_review/diagnose_render.py` |
-| SSIM | present | `stage4_review/divine_eye.py` |
+| Chamfer distance | **implemented** | `_shared/chamfer.py`, reported by `stage4_review/divine_eye.py` as `directionalChamfer` (report-only until calibrated) |
+| ΔE colour difference | present | `stage4_review/diagnose_render.py`; per-ROI in `stage4_review/microscope.py` |
+| SSIM | present | `stage4_review/divine_eye.py` (64×64 whole frame); native-resolution per patch in `stage4_review/microscope.py` |
+| Native-resolution feature scoring | **implemented** | `stage4_review/microscope.py`, feeding `per_feature.py --scores` |
+| Visible-footprint (occlusion) masking | **implemented** | `stage4_review/microscope.py --component-hidden id=frame.png` |
+| Labeled calibration corpus | **implemented** | `stage4_review/build_corpus.py` + `stage4_review/calibrate_eye.py` (synthetic provenance never authorizes a threshold flip) |
 
-Genuinely absent, and therefore the actual work: `setViewOffset` zoom patches, render targets, SDF,
-Hausdorff, ID/depth/normal/albedo passes, per-ROI ΔE2000, and **occlusion masking in stage 4**
-(occlusion appears in stage 2 spec and stage 1 intake, nowhere in review).
+**Implemented since this document was written:** `forge/stage4_review/microscope.py` covers the
+Python-side half — native-resolution ROI cropping, per-ROI ΔE2000, patch SSIM, edge agreement,
+visible-footprint masking (the occlusion gap named below), the concave-feature colour rule,
+`insufficient-reference-resolution`, worst-first aggregation, and the hand-off into
+`per_feature.py`'s critical-feature AND gate. `forge/_shared/chamfer.py` adds bidirectional
+directional chamfer, report-only pending calibration.
+
+Still absent, and browser-side by nature: `setViewOffset` zoom patches, `WebGLRenderTarget` capture,
+and the ID/depth/normal/albedo pass set. Those must come from the running Three.js route —
+`microscope.py` deliberately crops an existing full-resolution capture instead, because moving the
+camera closer or switching to orthographic changes the projection and the patch then stops showing
+what the reference view shows. Also still absent: SDF contour distance and Hausdorff worst-edge
+distance.
 
 ## The resolution problem, stated exactly
 

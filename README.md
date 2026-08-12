@@ -87,9 +87,6 @@ It runs under Claude Code, Codex, or OpenCode. It is agent-agnostic: wherever th
 
 ## How it works
 
-A staged sculpting pipeline turns the reference image into a spec, then generates and vision-reviews one build pass at a time — `blockout → structural → form → material → surface → lighting → interaction → optimization` — self-correcting until every identity-defining feature clears its threshold.
-
-**→ Full pipeline diagram, gates, self-correction logic, and the token-efficiency design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 A staged sculpting pipeline turns the reference image into a spec, then generates and vision-reviews one build pass at a time — `blockout → structural → form → material → surface → lighting → interaction → optimization` — self-correcting until every identity-defining feature clears its threshold. Deterministic Python scripts handle validation and gating; model tokens are spent only on visual judgment and code.
 
 **→ Full pipeline diagram, gates, self-correction logic, script reference, and the token-efficiency design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
@@ -207,6 +204,9 @@ The net effect: you still get a faithful 3D model from an image, but the expensi
 | `stage4_review/material_gate.py` | Block material-pass until registry, crop, render, compatibility, and comparison evidence passes. |
 | `stage4_review/make_comparison_sheet.py` | Package one reference-vs-render sheet for review. |
 | `stage4_review/append_review.py` | Record a per-pass review: scores, decision, evidence. |
+| `stage4_review/microscope.py` | Native-resolution per-feature fidelity — the instrument for details the whole-frame score cannot see. |
+| `stage4_review/turntable_gate.py` | Orbit coverage + interior-hole detection, recorded into the spec so it can block a pass. |
+| `stage4_review/build_corpus.py` | Generate a labeled corpus by controlled perturbation, for Divine Eye regression. |
 | `stage4_review/cs2_review.py` | Evaluate the blocking CS2 knife review contract and versioned scene thresholds. |
 | `_shared/feature_acceptance_policy.py` | Internal helper enforcing per-feature score thresholds. |
 | `stage1_intake/build_detail_inventory.py` | Slice the reference into zones and scaffold a detail inventory. |
@@ -290,7 +290,6 @@ img2threejs is free and open source. If it saved you time or found its way into 
 
 <a href="https://www.buymeacoffee.com/hoainhowors" target="_blank" rel="noopener noreferrer"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me a Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
-VietQR / MoMo / PayPal also work — see the [donate page](https://hoainho.github.io/img2threejs-showcase/donate.html).
 VietQR / MoMo / PayPal also work — see the [donate page](https://img2threejs.github.io/img2threejs-showcase/donate.html).
 
 ---

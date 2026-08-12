@@ -1604,7 +1604,10 @@ def make_spec(target_name: str, image: str | None, assessment_payload: dict | No
     spec = {
         "targetName": target_name,
         "targetId": target_id,
-        "schemaVersion": "2.1",
+        # 2.2 adds the off-axis/attachment evidence requirement enforced by
+        # orchestrate_passes.check_pass. Pre-2.2 specs are exempt so work authored
+        # before the requirement existed is not retroactively blocked.
+        "schemaVersion": "2.2",
         "terminologyProfile": {
             "domain": "real-time procedural Three.js asset",
             "geometryTerms": [

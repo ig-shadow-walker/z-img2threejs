@@ -79,7 +79,7 @@ class PipelineTest(unittest.TestCase):
                 "--out", self.spec)
         self.assertEqual(r.returncode, 0, r.stderr)
         spec = json.loads(self.spec.read_text())
-        self.assertEqual(spec["schemaVersion"], "2.1")
+        self.assertEqual(spec["schemaVersion"], "2.2")
         self.assertEqual(spec["targetName"], "Oak")
 
     def test_cs2_assessment_embeds_local_spec_search_results(self):
@@ -242,12 +242,22 @@ class PipelineTest(unittest.TestCase):
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn("Tier 1 diagnostics have not passed", blocked.stdout + blocked.stderr)
 
-        # Recording a PASSING tier1 result (identical ref/render) unblocks it.
+        # Recording a PASSING tier1 result (identical ref/render) clears Tier 1 only.
         run("stage4_review/diagnose_render.py", "--reference", self.ref, "--render", self.ref,
             "--pass-id", "blockout", "--spec", self.spec, "--map-stripped-render", self.render,
             "--in-place")
+        still_blocked = run("stage3_build/orchestrate_passes.py", "check", self.spec, "--pass-id", "blockout")
+        # Tier 1 scores ONE camera, so on a schema-2.2 spec it is no longer sufficient:
+        # the pass stays blocked until off-axis evidence is recorded too.
+        self.assertNotEqual(still_blocked.returncode, 0)
+        self.assertIn("off-axis evidence missing", still_blocked.stdout + still_blocked.stderr)
+
+        # A passing multi-angle result recorded for the same pass unblocks it.
+        run("stage4_review/diagnose_render_multi_angle.py", "--reference", self.ref,
+            "--orbit", self.ref, "--orbit", self.ref,
+            "--spec", self.spec, "--pass-id", "blockout", "--in-place")
         unblocked = run("stage3_build/orchestrate_passes.py", "check", self.spec, "--pass-id", "blockout")
-        self.assertEqual(unblocked.returncode, 0, unblocked.stderr)
+        self.assertEqual(unblocked.returncode, 0, unblocked.stdout + unblocked.stderr)
 
     def test_orchestrator_starts_at_blockout(self):
         run("stage2_spec/new_sculpt_spec.py", "Oak", "--out", self.spec)

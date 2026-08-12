@@ -36,6 +36,13 @@ from math import sqrt
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+from gate_results import (  # noqa: E402
+    GATE_SELF_INTERSECTION,
+    add_recording_arguments,
+    apply_recording,
+)
+
 # A gate that quietly inspects a tenth of a mesh and then reports "clean" is worse than no gate, so
 # this budget is a cap on WORK, never on what the result claims: every result carries
 # sampledVertexCount / totalVertexCount / samplingStride so the coverage is on the face of it.
@@ -570,16 +577,27 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--max-samples", type=int, default=MAX_SAMPLED_VERTICES)
     parser.add_argument("--epsilon", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="print JSON instead of a summary")
+    add_recording_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
         meshes = _load_meshes(args.meshes)
         result = analyze_meshes(meshes, max_samples=args.max_samples, epsilon=args.epsilon)
+        # An unreadable mesh is an error, not a clean bill of health, so it fails the
+        # recorded verdict too -- otherwise a load failure would be stored as a pass.
+        entry = apply_recording(
+            args,
+            GATE_SELF_INTERSECTION,
+            result,
+            passed=not result["selfIntersecting"] and not result["errors"],
+            evidence={"meshes": str(args.meshes)},
+        )
+        if entry is not None:
+            result["recordedGateResult"] = entry
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             print(_format_summary(result))
-        # An unreadable mesh is an error, not a clean bill of health, so it outranks the verdict.
         if result["errors"]:
             return 2
         return 1 if result["selfIntersecting"] else 0

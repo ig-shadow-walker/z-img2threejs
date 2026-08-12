@@ -49,6 +49,13 @@ from extract_pbr_evidence import load_image, build_foreground_mask  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from diagnose_render_multi_angle import analyze_angles, silhouette_area_fraction  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "_shared"))
+from gate_results import (  # noqa: E402
+    GATE_TURNTABLE,
+    add_recording_arguments,
+    apply_recording,
+)
+
 
 # Front/right/back/left: the minimum orbit that can catch an off-axis-only
 # defect. Overridable by callers with unusual rigs (e.g. no rear access).
@@ -389,6 +396,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--collapse-ratio", type=float, default=DEFAULT_COLLAPSE_RATIO)
     parser.add_argument("--allow-holes", action="store_true")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a summary")
+    add_recording_arguments(parser)
     args = parser.parse_args(argv)
 
     try:
@@ -401,6 +409,15 @@ def main(argv: list[str]) -> int:
             collapse_ratio=args.collapse_ratio,
             allow_holes=args.allow_holes,
         )
+        entry = apply_recording(
+            args,
+            GATE_TURNTABLE,
+            result,
+            passed=bool(result["passed"]),
+            evidence={"captures": [str(path) for _azimuth, path in captures]},
+        )
+        if entry is not None:
+            result["recordedGateResult"] = entry
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
         else:

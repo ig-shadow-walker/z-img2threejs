@@ -294,12 +294,23 @@ class WorkflowStateTest(unittest.TestCase):
 
     def test_skill_router_keeps_mandatory_state_and_reference_gates_visible(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        # Collapse whitespace before matching prose requirements. These assertions exist to
+        # prove a MUST-read pointer is PRESENT, not to pin one particular line wrap -- an
+        # assertion on the wrap breaks whenever a paragraph is reflowed and quietly pressures
+        # the next author to contort the prose instead of fixing the guard.
+        flowed = " ".join(skill.split())
         self.assertIn("forge/next.py --state .img2threejs/state.json", skill)
-        self.assertIn("MUST read `grimoire/intake/cs2_intake_contract.md` completely", skill)
-        self.assertIn("MUST read\n   `grimoire/review/gates_reference.md`", skill)
+        self.assertIn("MUST read `grimoire/intake/cs2_intake_contract.md` completely", flowed)
+        self.assertIn("MUST read `grimoire/review/gates_reference.md`", flowed)
         self.assertIn("forge/stage4_review/diagnose_render.py", skill)
         self.assertIn("forge/stage4_review/diagnose_render_multi_angle.py", skill)
         self.assertIn("forge/stage4_review/check_part_coverage.py", skill)
+        # The gates added alongside the recorded-evidence contract must stay reachable from
+        # the router, or an agent following SKILL.md top-to-bottom never runs them.
+        self.assertIn("forge/stage4_review/turntable_gate.py", skill)
+        self.assertIn("forge/stage4_review/attachment_anchor.py", skill)
+        self.assertIn("forge/stage4_review/microscope.py", skill)
+        self.assertIn("--correspondences", skill)
 
     def test_all_direct_router_references_exist(self):
         for relative in (

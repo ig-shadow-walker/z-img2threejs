@@ -18,7 +18,9 @@ import json
 import math
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 if __package__:
     from . import camera_fitting_math as _math
@@ -226,6 +228,102 @@ def _residual_diagnostics(
     return diagnostics
 
 
+@dataclass(frozen=True, slots=True)
+class _FileCorrespondence:
+    """One 3D-to-2D landmark pair parsed from `--correspondences`.
+
+    Satisfies the LandmarkCorrespondence protocol without importing its dataclass,
+    so the file format stays decoupled from the solver's internals.
+    """
+
+    name: str
+    world: tuple[float, float, float]
+    observed: tuple[float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class _CliCameraInitialization:
+    """Starting camera for the fit, seeded from image dimensions plus CLI hints."""
+
+    image_width: int
+    image_height: int
+    fov_degrees: float
+    yaw_degrees: float
+    pitch_degrees: float
+    roll_degrees: float
+    position: tuple[float, float, float]
+
+
+def _number_triple(value: Any, label: str, length: int) -> tuple[float, ...]:
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        raise ValueError(f"{label} must be an array of {length} numbers")
+    out: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{label} must contain only numbers")
+        out.append(float(item))
+    return tuple(out)
+
+
+def load_correspondences(path: Path) -> list[_FileCorrespondence]:
+    """Parse the correspondence file the solver needs.
+
+    Format -- a bare array, or {"correspondences": [...]}:
+
+        [{"name": "muzzle-tip", "world": [0, 0.2, 1.1], "observed": [812, 344]}, ...]
+
+    `world` is in the spec's own object-space coordinate frame; `observed` is in
+    pixels on the reference image. At least MINIMUM_CORRESPONDENCES pairs are
+    required, and they must not be coplanar-degenerate -- the solver raises for
+    both cases rather than returning a confident wrong camera.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    items = data.get("correspondences") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        raise ValueError(
+            "correspondence file must be a JSON array, or an object with a 'correspondences' array"
+        )
+    parsed: list[_FileCorrespondence] = []
+    for index, item in enumerate(items):
+        label = f"correspondences[{index}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{label} must be an object")
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{label}.name must be a non-empty string")
+        world = _number_triple(item.get("world"), f"{label}.world", 3)
+        observed = _number_triple(item.get("observed"), f"{label}.observed", 2)
+        parsed.append(
+            _FileCorrespondence(
+                name=name,
+                world=(world[0], world[1], world[2]),
+                observed=(observed[0], observed[1]),
+            )
+        )
+    return parsed
+
+
+def _initial_camera_from_args(image: Path, args: argparse.Namespace) -> _CliCameraInitialization:
+    size = detect_size(image.read_bytes())
+    if size is None:
+        raise ValueError(
+            "could not read image dimensions, so the fit has no pixel frame to solve in; "
+            "supply a PNG/JPEG/GIF/WebP the probe can decode"
+        )
+    width, height = size
+    aspect = width / height if height else 1.0
+    default_fov, _rationale = estimate_fov(round(aspect, 4))
+    return _CliCameraInitialization(
+        image_width=width,
+        image_height=height,
+        fov_degrees=args.fov_degrees if args.fov_degrees is not None else default_fov,
+        yaw_degrees=args.yaw,
+        pitch_degrees=args.pitch,
+        roll_degrees=args.roll,
+        position=(0.0, args.height_offset, args.distance if args.distance is not None else 2.5),
+    )
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("image", type=Path)
@@ -235,12 +333,57 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--roll", type=float, default=0.0, help="Orientation placeholder, degrees")
     parser.add_argument("--distance", type=float, default=None, help="Camera distance hint, scene units")
     parser.add_argument("--height-offset", type=float, default=0.0, help="Camera Y offset hint, scene units")
+    parser.add_argument(
+        "--correspondences",
+        type=Path,
+        default=None,
+        help=(
+            f"JSON of >= {MINIMUM_CORRESPONDENCES} 3D-to-2D landmark pairs "
+            "({name, world:[x,y,z], observed:[u,v]}). Supplying this SOLVES the camera "
+            "instead of emitting placeholder orientation/position."
+        ),
+    )
     parser.add_argument("--out", type=Path, help="Write the referenceCamera JSON block to this path")
     args = parser.parse_args(argv)
     image = args.image.expanduser().resolve()
     if not image.exists():
         parser.error(f"{image} does not exist")
-    camera = build_camera(image, args)
+
+    if args.correspondences is not None:
+        # The solved path. Without it this CLI can only emit a default guess, which is
+        # why a projection bake downstream had nothing better than an identity camera
+        # to work from.
+        correspondence_path = args.correspondences.expanduser().resolve()
+        if not correspondence_path.exists():
+            parser.error(f"{correspondence_path} does not exist")
+        try:
+            correspondences = load_correspondences(correspondence_path)
+            camera = fit_camera_to_correspondences(
+                correspondences,
+                initial_camera=_initial_camera_from_args(image, args),
+            )
+        except InsufficientCorrespondencesError as exc:
+            print(
+                f"error: need at least {exc.required} correspondences to solve a camera, got {exc.actual}",
+                file=sys.stderr,
+            )
+            return 1
+        except DegenerateCorrespondencesError as exc:
+            print(
+                "error: the supplied correspondences are geometrically degenerate "
+                f"({exc.correspondence_count} points with no depth spread); add landmarks that are "
+                "not coplanar so the fit is constrained",
+                file=sys.stderr,
+            )
+            return 1
+        except (InvalidInitialCameraError, NonFiniteCameraInputError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        # The fitted descriptor keeps the source image, which the fit itself does not know.
+        camera["sourceImage"] = str(image)
+    else:
+        camera = build_camera(image, args)
+
     text = json.dumps({"referenceCamera": camera}, indent=2, ensure_ascii=False)
     if args.out:
         out_path = args.out.expanduser().resolve()
